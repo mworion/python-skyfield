@@ -60,7 +60,7 @@ def _filename_of(url):
     return urlparse(url).path.split('/')[-1]
 
 _IERS = 'https://hpiers.obspm.fr/iers/bul/bulc/'
-_IERS2 = 'ftp://ftp.iers.org/products/eop/rapid/standard/'
+_IERS2 = 'https://datacenter.iers.org/products/eop/rapid/standard/'
 _JPL = 'https://ssd.jpl.nasa.gov/ftp/eph/planets/bsp/'
 _NAIF_KERNELS = 'https://naif.jpl.nasa.gov/pub/naif/generic_kernels/'
 _NAIF = 'https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/satellites/'
@@ -158,7 +158,7 @@ class Loader(object):
         seconds = time() - mtime
         return seconds / 86400.0
 
-    def _exists(self, filename):
+    def exists(self, filename):
         return os.path.exists(self.path_to(filename))
 
     def __call__(self, filename, reload=False, backup=False, builtin=False):
@@ -346,7 +346,7 @@ class Loader(object):
         Service.  For details, see :ref:`downloading-timescale-files`.
 
         """
-        e = self._exists
+        e = self.exists
         if builtin:
             # See "build_arrays.py" for a notes on how these are stored.
             arrays = load_bundled_npy('iers.npz')

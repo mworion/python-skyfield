@@ -1,4 +1,4 @@
-"""Basic tests of the Skyfield API module and its contents."""
+"""Tests of the Skyfield `api` module and user-facing exceptions."""
 
 import numpy as np
 from assay import assert_raises
@@ -16,6 +16,10 @@ def test_sending_jd_that_is_not_a_julian_date():
                        " instead of the value 'blah'"):
         earth.at('blah')
 
+def test_observe_and_apparent_survive_an_empty_time_array(ts):
+    e = api.load('de421.bsp')
+    e['earth'].at(ts.utc(2024, 2, 4, 7, [])).observe(e['mars']).apparent()
+
 def test_apparent_position_class(ts):
     e = api.load('de421.bsp')
     p = e['earth'].at(ts.utc(2014, 2, 9, 14, 50)).observe(e['mars']).apparent()
@@ -25,6 +29,13 @@ def test_astrometric_position_class(ts):
     e = api.load('de421.bsp')
     p = e['earth'].at(ts.utc(2014, 2, 9, 14, 50)).observe(e['mars'])
     assert isinstance(p, positionlib.Astrometric)
+
+def test_astrometric_position_does_not_allow_altaz(ts):
+    e = api.load('de421.bsp')
+    o = e['earth'] + api.wgs84.latlon(36.7138, -112.2169)
+    a = o.at(ts.utc(2014, 2, 9, 14, 50)).observe(e['mars'])
+    with assert_raises(ValueError, 'it is not useful to call .altaz'):
+        a.altaz()
 
 def test_ephemeris_contains_method(ts):
     e = api.load('de421.bsp')
@@ -38,8 +49,7 @@ def test_ephemeris_contains_method(ts):
 def test_exception_raised_for_dates_outside_ephemeris(ts):
     eph = api.load('de421.bsp')
     message = (
-        'ephemeris segment only covers dates 1899-07-28 23:59:18Z'
-        ' through 2053-10-08 23:58:51Z UT'
+        'ephemeris segment only covers dates 1899-07-29 through 2053-10-09'
     )
     with assert_raises(EphemerisRangeError, message) as a:
         eph['earth'].at(ts.tt(4096))
@@ -99,17 +109,25 @@ def test_star_vector_from_topos(ts):
     assert (a1.position.au == a.position.au[:,0]).all()
     assert (a2.position.au == a.position.au[:,1]).all()
 
+def test_hadec_needs_a_longitude(ts):
+    e = api.load('de421.bsp')
+    earth = e['earth']
+    moon = e['moon']
+    apparent = earth.at(ts.utc(2016)).observe(moon)
+    with assert_raises(ValueError, 'from a specific latitude and longitude'):
+        apparent.hadec()
+
 def test_altaz_needs_topos(ts):
     e = api.load('de421.bsp')
     earth = e['earth']
     moon = e['moon']
     apparent = earth.at(ts.utc(2016)).observe(moon).apparent()
-    with assert_raises(ValueError, 'from a specific Earth location'):
+    with assert_raises(ValueError, 'from a specific latitude and longitude'):
         apparent.altaz()
 
 def test_from_altaz_needs_topos():
     p = positionlib.ICRF([0.0, 0.0, 0.0])
-    with assert_raises(ValueError, 'to compute an altazimuth position'):
+    with assert_raises(ValueError, 'to compute altitude and azimuth'):
         p.from_altaz(alt_degrees=0, az_degrees=0)
 
 def test_from_altaz_parameters(ts):

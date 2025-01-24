@@ -1,8 +1,8 @@
 """Basic operations that are needed repeatedly throughout Skyfield."""
 
 from numpy import (
-    arcsin, arctan2, array, cos, einsum, finfo, float64,
-    full_like, load, rollaxis, sin, sqrt,
+    arctan2, array, cos, einsum, finfo, float64,
+    full_like, hypot, load, nan, rollaxis, sin, sqrt, where,
 )
 from pkgutil import get_data
 from skyfield.constants import tau
@@ -13,6 +13,11 @@ class A(object):
     """Allow literal NumPy arrays to be spelled ``A[1, 2, 3]``."""
     __getitem__ = array
 A = A()
+
+def sqrt_nan(n):
+    """Return the square root of ``n``, or ``nan`` if ``n < 0``."""
+    # (See design/sqrt_nan.py for a speed comparison of approaches.)
+    return where(n < 0.0, nan, sqrt(abs(n)))
 
 def dots(v, u):
     """Given one or more vectors in `v` and `u`, return their dot products.
@@ -81,7 +86,7 @@ def to_spherical(xyz):
     """
     r = length_of(xyz)
     x, y, z = xyz
-    theta = arcsin(z / (r + _AVOID_DIVIDE_BY_ZERO))
+    theta = arctan2(z, hypot(x, y))
     phi = arctan2(y, x) % tau
     return r, theta, phi
 
@@ -91,9 +96,9 @@ def _to_spherical_and_rates(r, v):
     xdot, ydot, zdot = v
 
     length = length_of(r)
-    lat = arcsin(z / (length + _AVOID_DIVIDE_BY_ZERO))
+    lat = arctan2(z, hypot(x, y));
     lon = arctan2(y, x) % tau
-    range_rate = dots(r, v) / length_of(r)
+    range_rate = dots(r, v) / length
 
     x2 = x * x
     y2 = y * y
@@ -145,6 +150,14 @@ def rot_z(theta):
     one = zero + 1.0
     return array(((c, -s, zero), (s, c, zero), (zero, zero, one)))
 
+# The rotation matrices R1, R2, and R3 in _The Explanatory Supplement to
+# the Astronomical Almanac_ use a left-handed rotation around the x and
+# z axes.  In case anyone needs them:
+
+def R1(theta): return rot_x(-theta)
+def R2(theta): return rot_y(theta)
+def R3(theta): return rot_z(-theta)
+
 def angular_velocity_matrix(angular_velocity_vector):
     x, y, z = angular_velocity_vector
     zero = x * 0.0
@@ -153,9 +166,10 @@ def angular_velocity_matrix(angular_velocity_vector):
 def _to_array(value):
     """Convert plain Python sequences into NumPy arrays.
 
-    This helps Skyfield endpoints convert caller-provided tuples and
-    lists into NumPy arrays.  If the ``value`` is not a sequence, then
-    it is coerced to a Numpy float object, but not an actual array.
+    This lets users pass plain old Python lists and tuples to Skyfield,
+    instead of always having to remember to build NumPy arrays.  We pass
+    any kind of generic sequence to the NumPy ``array()`` constructor
+    and wrap any other kind of value in a NumPy ``float64`` object.
 
     """
     if hasattr(value, 'shape'):

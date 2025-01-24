@@ -4,7 +4,7 @@ from numpy import array
 from skyfield import api
 from skyfield.api import EarthSatellite, load
 from skyfield.constants import AU_KM, AU_M
-from skyfield.sgp4lib import TEME_to_ITRF
+from skyfield.sgp4lib import TEME_to_ITRF, VectorFunction
 from skyfield.timelib import julian_date
 
 line1 = '1 25544U 98067A   18184.80969102  .00001614  00000-0  31745-4 0  9993'
@@ -50,7 +50,7 @@ def test_iss_against_horizons():
     assert abs(p.velocity.au_per_d - hv).max() < three_km_per_hour
 
 # The following tests are based on the text of
-# http://www.celestrak.com/publications/AIAA/2006-6753/AIAA-2006-6753-Rev2.pdf
+# http://www.celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753-Rev2.pdf
 
 appendix_c_example = """\
 TEME EXAMPLE
@@ -68,7 +68,7 @@ seconds_per_day = 86400.0
 # "Revisiting Spacetrack Report #3" AIAA 2006-6753 (earlier versions of
 # the PDF use different numbers):
 #
-# http://ww.celestrak.com/publications/AIAA/2006-6753/AIAA-2006-6753-Rev2.pdf
+# http://www.celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753-Rev2.pdf
 
 def test_appendix_c_conversion_from_TEME_to_ITRF():
     rTEME = array([5094.18016210, 6127.64465950, 6380.34453270])
@@ -126,7 +126,7 @@ def test_appendix_c_satellite():
     assert abs(-3.157345433 - vTEME[2]) < epsilon
 
 def test_epoch_date():
-    # Example from https://celestrak.com/columns/v04n03/
+    # Example from https://celestrak.org/columns/v04n03/
     s = appendix_c_example.replace('00179.78495062', '98001.00000000')
     lines = s.splitlines()
     sat = EarthSatellite(lines[1], lines[2], lines[0])
@@ -171,3 +171,39 @@ def test_is_another_satellite_behind_earth():
     expected = [True, True, True, True, True, True]
     p = (s - s2).at(t)
     assert list(p.is_behind_earth()) == expected
+
+def test_behind_earth_thoroughly():
+    class FakeSat(VectorFunction):
+        center = 399
+        target = None
+        zero = array([0,0,0])
+        def __init__(self, r):
+            self.r = array(r)
+        def _at(self, t):
+            return self.r, self.zero, None, None
+
+    ts = api.load.timescale()
+    t = ts.utc(2023, 4, 8, 1, 25)
+
+    # Earth's equatorial radius is around 6378 km.
+
+    sats = [
+        FakeSat([-9e5 / AU_KM, 0, 0]),  # far left of Earth
+        FakeSat([-8e5 / AU_KM, 0, 0]),  # left of Earth
+        FakeSat([0, 0, 0]),             # center of Earth
+        FakeSat([8e5 / AU_KM, 0, 0]),   # right of Earth
+        FakeSat([9e5 / AU_KM, 0, 0]),   # farther right of Earth
+    ]
+    verdicts = [
+        (s2 - s1).at(t).is_behind_earth()
+        for s1 in sats
+        for s2 in sats
+        if s2 is not s1
+    ]
+    assert verdicts == [
+        False, True, True, True,  # First two fake sats can see each other.
+        False, True, True, True,
+        True, True, True, True,
+        True, True, True, False,
+        True, True, True, False,  # Last two fake sats can see each other.
+    ]

@@ -5,7 +5,7 @@ import sys
 from collections import namedtuple
 from datetime import date, datetime, timedelta
 from numpy import (
-    array, concatenate, cos, float_, int64, isnan, isinf, linspace,
+    array, concatenate, cos, float64, int64, isnan, isinf, linspace,
     nan, ndarray, nonzero, pi, rollaxis, searchsorted, sin, where, zeros_like,
 
 )
@@ -24,6 +24,7 @@ from .nutationlib import (
 )
 from .precessionlib import compute_precession
 
+_EMPTY_TUPLE = ()  # since we use the value as a sentinel
 DAY_US = 86400000000.0
 GREGORIAN_START = 2299161
 GREGORIAN_START_ENGLAND = 2361222
@@ -101,8 +102,8 @@ class Timescale(object):
             self.delta_t_function = build_delta_t(delta_t_recent)
 
         self.leap_dates, self.leap_offsets = leap_dates, leap_offsets
-        self.J2000 = Time(self, float_(T0))
-        self.B1950 = Time(self, float_(B1950))
+        self.J2000 = Time(self, float64(T0))
+        self.B1950 = Time(self, float64(B1950))
         self.julian_calendar_cutoff = None
 
         # Our internal leap-second table has three columns:
@@ -262,6 +263,21 @@ class Timescale(object):
                 return [strftime(format, item) for item in zip(*tup)]
             return strftime(format, tup)
 
+    def _utc_jd(self, whole, fraction):
+        # Switch from days to seconds.
+        seconds = whole * DAY_S
+        seconds2, fraction_s = divmod(fraction * DAY_S, 1.0)
+        seconds += seconds2
+
+        # Add an integer number of leap seconds.
+        seconds += interp(seconds, self._leap_utc, self._leap_offsets)
+
+        # Switch back to days.
+        whole, fraction = divmod(seconds, DAY_S)
+        fraction += fraction_s
+        fraction /= DAY_S
+        return self.tai_jd(whole, fraction)
+
     def tai(self, year=None, month=1, day=1, hour=0, minute=0, second=0.0,
             jd=None):
         """Build a `Time` from an International Atomic Time `calendar date`.
@@ -414,10 +430,13 @@ class Time(object):
         self.ts = ts
         self.whole = tt
         self.tt_fraction = tt_fraction
-        self.shape = getattr(tt, 'shape', ())
+        self.shape = getattr(tt, 'shape', _EMPTY_TUPLE)
 
     def __len__(self):
-        return self.shape[0]
+        shape = self.shape
+        if shape is _EMPTY_TUPLE:
+            raise TypeError('this is a single Time, not an array')
+        return shape[0]
 
     def __repr__(self):
         size = getattr(self.tt, 'size', -1)
@@ -429,9 +448,9 @@ class Time(object):
                     .replace('[ ', '[').replace('  ', ' '))
 
     def __getitem__(self, index):
+        if self.shape is _EMPTY_TUPLE:
+            raise TypeError('this is a single Time, not an array')
         # TODO: also copy cached matrices?
-        # TODO: raise non-IndexError exception if this Time is not an array;
-        # otherwise, a `for` loop over it will not raise an error.
         t = Time(self.ts, self.whole[index], self.tt_fraction[index])
         d = self.__dict__
         for name in 'tai_fraction', 'tdb_fraction', 'ut1_fraction':
@@ -535,10 +554,23 @@ class Time(object):
         if self.shape:
             zone = [utc] * self.shape[0]
             argsets = zip(year, month, day, hour, minute, second, micro, zone)
-            dt = array([datetime(*args) for args in argsets])
+            d = []
+            a = d.append
+            try:  # placed outside the loop for efficiency
+                for args in argsets:
+                    a(datetime(*args))
+            except ValueError as e:
+                _upgrade_datetime_exception(args, e)
+                raise
+            d = array(d)
         else:
-            dt = datetime(year, month, day, hour, minute, second, micro, utc)
-        return dt, leap_second
+            args = year, month, day, hour, minute, second, micro, utc
+            try:
+                d = datetime(*args)
+            except ValueError as e:
+                _upgrade_datetime_exception(args, e)
+                raise
+        return d, leap_second
 
     def utc_iso(self, delimiter='T', places=0):
         """Convert to an ISO 8601 string like ``2014-01-18T01:35:38Z`` in UTC.
@@ -612,10 +644,8 @@ class Time(object):
         * ``%S`` second
         * ``%A`` day of week, ``%a`` its abbreviation
 
-        You can find the full list, along with options that control
-        field widths and leading zeros, at:
-
-        https://docs.python.org/3/library/time.html#time.strftime
+        The ``%Z`` and ``%z`` formats are not supported; instead, simply
+        use the literal characters ``'UTC'`` in your format string.
 
         If the smallest time unit in your format is minutes or seconds,
         then the time is rounded to the nearest minute or second.
@@ -794,7 +824,7 @@ class Time(object):
 
     @reify
     def utc(self):
-        """A tuple ``(year, month, day, hour, minute, seconds)`` in UTC."""
+        """A tuple ``(year, month, day, hour, minute, second)`` in UTC."""
         utc = self._utc_tuple(0.0)
         return (array(utc).view(CalendarArray) if self.shape
                 else CalendarTuple(*utc))
@@ -888,6 +918,10 @@ class Time(object):
         if isinstance(other_time, Time):
             return self.__sub__(other_time) == 0.0
         return False
+
+    def __lt__(self, other):
+        return ((self.tt_fraction - other.tt_fraction)
+                + (self.whole - other.whole)) < 0
 
     def __add__(self, other_time):
         if isinstance(other_time, timedelta):
@@ -1061,6 +1095,15 @@ delta_t_parabola_morrison_stephenson_2004 = Splines(
     [1820.0, 1920.0, 0.0, 32.0, 0.0, -20.0])
 
 def build_delta_t(delta_t_recent):
+    """Return a function t→∆T, given recent real-world observations of ∆T.
+
+    When asked for ∆T outside the range of the `delta_t_recent` table,
+    Skyfield uses the splines for 720 BC – AD 2015 computed by Morrison,
+    Stephenson, Hohenkerk, and Zawilski.  For dates that fall outside of
+    the spines, we use the long-term parabola of Stephenson, Morrison,
+    and Hohenkerk.
+
+    """
     parabola = delta_t_parabola_stephenson_morrison_hohenkerk_2016
     s15_table = load_bundled_npy('delta_t.npz')['Table-S15.2020.txt']
     table_tt, table_delta_t = delta_t_recent
@@ -1214,6 +1257,16 @@ def _strftime(format, year, month, day, hour, minute, second,
         if getattr(year, 'ndim', 0):
             return [strftime(format, item) for item in zip(*tup)]
         return strftime(format, tup)
+
+def _upgrade_datetime_exception(args, e):
+    year, month, day, hour, minute, second, micro, zone = args
+    if year < 0:
+        e.args = ("Python's datetime does not support negative"
+                  ' years like the year {}'.format(year),)
+    elif month == 2 and day == 29:
+        e.args = ("Python's datetime does not support Julian leap"
+                  ' days like {} February 29 that are missing from'
+                  ' the Gregorian calendar'.format(year),)
 
 _naive_complaint = """cannot interpret a datetime that lacks a timezone
 

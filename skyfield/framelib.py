@@ -37,7 +37,7 @@ del build_matrix
 _identity = array([(1,0,0), (0,1,0), (0,0,1)])
 
 class ICRS(object):
-    """The International Coordinate Reference System (ICRS).
+    """The International Celestial Reference System (ICRS).
 
     The ICRS is a permanent reference frame which has replaced J2000,
     with which its axes agree to within 0.02 arcseconds (closer than the
@@ -56,7 +56,13 @@ def build_ecliptic_matrix(t):
     return mxm(rot_x(- true_obliquity), t.M)
 
 class true_equator_and_equinox_of_date(object):
-    """The dynamical frame of the Earth’s true equator and equinox of date.
+    """The dynamical frame of Earth’s true equator and true equinox of date.
+
+    This frame is used for measuring right ascension and declination.
+    Unlike the fixed reference frames J2000 and the ICRS, this ‘TETE’
+    frame rotates slowly as the Earth’s precession and nutation shift
+    the equinox point.  Unlike the :class:`~skyfield.sgp4lib.TEME`
+    frame, this frame doesn’t ignore nutation.
 
     This is supplied as an explicit reference frame in case you want
     |xyz| coordinates; if you want angles, it’s better to use the
@@ -136,7 +142,8 @@ itrs = itrs()
 
 class ecliptic_frame(object):
     """Reference frame of the true ecliptic and equinox of date."""
-    def rotation_at(self, t):
+    @staticmethod
+    def rotation_at(t):
         return build_ecliptic_matrix(t)
 
 ecliptic_frame = ecliptic_frame()

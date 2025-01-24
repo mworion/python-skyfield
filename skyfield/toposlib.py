@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+"""Classes that represent a ‘topocentric’ position on the Earth’s surface."""
 
 from numpy import arctan2, array, array2string, cos, exp, sin, sqrt
 from .constants import ANGVEL, DAY_S, RAD2DEG, T0, pi, tau
@@ -94,7 +95,7 @@ class GeographicPosition(ITRSPosition):
 
         """
         sprime = -47.0e-6 * (t.whole - T0 + t.tdb_fraction) / 36525.0
-        return (t.gast + self.longitude._hours + sprime / 54000.0) % 24.0
+        return (t.gast + self.longitude.hours + sprime / 54000.0) % 24.0
 
     def refract(self, altitude_degrees, temperature_C, pressure_mbar):
         """Predict how the atmosphere will refract a position.
@@ -132,7 +133,7 @@ class Geoid(object):
 
     The math for turning a position into latitude and longitude is based
     on Dr. T.S. Kelso's quite helpful article `Orbital Coordinate
-    Systems, Part III <https://www.celestrak.com/columns/v02n03/>`_.
+    Systems, Part III <https://www.celestrak.org/columns/v02n03/>`_.
 
     """
     def __init__(self, name, radius_m, inverse_flattening):
@@ -143,6 +144,11 @@ class Geoid(object):
         self._one_minus_flattening_squared = omf * omf
         f = 1.0 / inverse_flattening
         self._e2 = 2.0*f - f*f
+
+    @reify
+    def polar_radius(self):
+        """The Earth’s polar radius, as a :class:`~skyfield.units.Distance`."""
+        return Distance(self.radius.au * (1.0 - 1.0 / self.inverse_flattening))
 
     def latlon(self, latitude_degrees, longitude_degrees, elevation_m=0.0,
                cls=GeographicPosition):
@@ -179,39 +185,57 @@ class Geoid(object):
         c = 1.0 / sqrt(cosphi * cosphi + sinphi * sinphi * omf2)
         s = omf2 * c
 
-        ach = radius_au * c + elevation_au
-        ash = radius_au * s + elevation_au
+        # At equator: 6378 km, the Earth's actual radius at the equator.
+        # At the pole: 6399 km, the Earth's radius of curvature at the pole.
+        radius_xy = radius_au * c
+        xy = (radius_xy + elevation_au) * cosphi
+        x = xy * cos(lon)
+        y = xy * sin(lon)
 
-        ac = ach * cosphi
-        acsst = ac * sin(lon)
-        accst = ac * cos(lon)
-        r = array((accst, acsst, ash * sinphi))
+        # At equator: 6335 km, the Earth's radius of curvature at the equator.
+        # At the pole: 6357 km, the Earth's actual radius at the pole.
+        radius_z = radius_au * s
+        z = (radius_z + elevation_au) * sinphi
 
+        r = array((x, y, z))
         return cls(self, latitude, longitude, elevation, Distance(r))
 
     def latlon_of(self, position):
-        """Return the latitude and longitude of a geocentric ``position``."""
-        xyz_au, x, y, aC, R, lat = self._compute_latitude(position)
+        """Return the latitude and longitude of a ``position``.
+
+        The position’s ``.center`` must be 399, the center of the Earth.
+        Geodetic latitude and longitude are returned as a pair of
+        :class:`~skyfield.units.Angle` objects.
+
+        """
+        xyz_au, x, y, R, aC, hyp, lat = self._compute_latitude(position)
         lon = (arctan2(y, x) - pi) % tau - pi
         return Angle(radians=lat), Angle(radians=lon)
 
     def height_of(self, position):
-        """Return height above the ellipsoid for a geocentric ``position``."""
-        xyz_au, x, y, aC, R, lat = self._compute_latitude(position)
-        height_au = R / cos(lat) - aC
+        """Return the height above the Earth’s ellipsoid of a ``position``.
+
+        The position’s ``.center`` must be 399, the center of the Earth.
+        A :class:`~skyfield.units.Distance` is returned giving the
+        position’s geodetic height above the Earth’s surface.
+
+        """
+        xyz_au, x, y, R, aC, hyp, lat = self._compute_latitude(position)
+        height_au = sqrt(hyp * hyp + R * R) - aC
         return Distance(height_au)
 
     def geographic_position_of(self, position):
-        """Return the `GeographicPosition` of a geocentric ``position``.
+        """Return the `GeographicPosition` of a ``position``.
 
-        Given a geocentric ``position``, returns a `GeographicPosition`
-        providing its ``latitude``, ``longitude``, and ``elevation``
+        The position’s ``.center`` must be 399, the center of the Earth.
+        A `GeographicPosition` is returned giving the position’s
+        geodetic ``latitude`` and ``longitude``, and an ``elevation``
         above or below the surface of the ellipsoid.
 
         """
-        xyz_au, x, y, aC, R, lat = self._compute_latitude(position)
+        xyz_au, x, y, R, aC, hyp, lat = self._compute_latitude(position)
         lon = (arctan2(y, x) - pi) % tau - pi
-        height_au = R / cos(lat) - aC
+        height_au = sqrt(hyp * hyp + R * R) - aC
         return GeographicPosition(
             latitude=Angle(radians=lat),
             longitude=Angle(radians=lon),
@@ -223,12 +247,13 @@ class Geoid(object):
     def subpoint_of(self, position):
         """Return the point on the ellipsoid directly below a ``position``.
 
-        Given a geocentric ``position``, returns a `GeographicPosition`
-        whose ``latitude`` and ``longitude`` lie directly underneath the
-        input position and whose ``elevation`` is zero.
+        The position’s ``.center`` must be 399, the center of the Earth.
+        Returns a `GeographicPosition` giving the geodetic ``latitude``
+        and ``longitude`` that lie directly below the input position,
+        and an ``elevation`` above the ellipsoid of zero.
 
         """
-        xyz_au, x, y, aC, R, lat = self._compute_latitude(position)
+        xyz_au, x, y, R, aC, hyp, lat = self._compute_latitude(position)
         lon = (arctan2(y, x) - pi) % tau - pi
         return self.latlon(lat * RAD2DEG, lon * RAD2DEG)
 
@@ -248,9 +273,12 @@ class Geoid(object):
         for iteration in 0,1,2:
             sin_lat = sin(lat)
             e2_sin_lat = e2 * sin_lat
+            # At 0°, aC = 6378 km, Earth's actual radius at the equator.
+            # At 90°, aC = 6399 km, Earth's radius of curvature at the pole.
             aC = a / sqrt(1.0 - e2_sin_lat * sin_lat)
-            lat = arctan2(z + aC * e2_sin_lat, R)
-        return xyz_au, x, y, aC, R, lat
+            hyp = z + aC * e2_sin_lat
+            lat = arctan2(hyp, R)
+        return xyz_au, x, y, R, aC, hyp, lat
 
     subpoint = geographic_position_of  # deprecated method name
 
