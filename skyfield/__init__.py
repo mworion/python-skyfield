@@ -2,8 +2,8 @@
 
 Most users will use Skyfield by importing ``skyfield.api`` and using the
 functions and classes there.  See the ``documentation`` directory inside
-the source code, as well as the http://rhodesmill.org/skyfield/ site!
+the repository, as well as the http://rhodesmill.org/skyfield/ site!
 
 """
-VERSION = 1, 41
+VERSION = 1, 49
 __version__ = '.'.join(map(str, VERSION))

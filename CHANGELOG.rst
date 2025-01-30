@@ -5,19 +5,210 @@ Changelog
 .. TODO After finding how to test TIRS reference frame, add it to changelog.
         And double-check the constellation boundaries array.
 
-v1.42 — Unreleased
-------------------
+-----------------
+Released versions
+-----------------
+
+v1.50 — Not yet released
+------------------------
+
+* A new :class:`~skyfield.framelib.mean_equator_and_equinox_of_date`
+  coordinate frame lets users generate the same coordinates that an
+  almanac might give.
+
+* Skyfield now offers a Solar System Barycenter object, so users don’t
+  have to construct the position themselves: ``SSB.at(t)`` returns a
+  position whose coordinates and velocity are both zero in the ICRS.
+
+* Skyfield no longer tries to protect users by raising an exception if,
+  contrary to the usual custom in astronomy, they ask for ``ra.degrees``
+  or ``dec.hours``.  So users no longer need to add an underscore prefix
+  (``_degrees`` or ``_hours``) to bypass the exception, though both
+  names will keep working to support legacy code.
+
+* The time methods :meth:`~skyfield.timelib.Time.utc_datetime()` and
+  :meth:`~skyfield.timelib.Time.utc_datetime_and_leap_second()` now
+  intercept the ``ValueError`` that Python raises for a negative year or
+  a Julian-only leap day, and replace the generic error message with a
+  more specific one.
+  `#957 <https://github.com/skyfielders/python-skyfield/issues/957>`_
+  `#992 <https://github.com/skyfielders/python-skyfield/issues/992>`_
+
+* If you call ``load.timescale(builtin=False)`` to download an updated
+  copy of the IERS ``finals2000A.all`` Earth orientation data file,
+  Skyfield now fetches the file with HTTPS, since their old FTP server
+  seems to have disappeared.
+  `#1019 <https://github.com/skyfielders/python-skyfield/issues/1019>`_
+
+v1.49 — 2024 June 13
+--------------------
+
+* A new :meth:`~skyfield.sgp4lib.EarthSatellite.from_omm()` Earth
+  Satellite constructor has been added to load satellite elements from
+  modern OMM data instead of from old TLE data.  The Earth satellite
+  documentation now :ref:`describes two OMM formats
+  <satellite-element-formats>` and :ref:`shows how to load satellites
+  from each one <loading-satellite-elements>`.  `#763
+  <https://github.com/skyfielders/python-skyfield/issues/763>`_
+
+* If you print an instance of the
+  :class:`~skyfield.planetarylib.PlanetaryConstants` class to the screen,
+  it will list all of the segments that it has loaded from binary kernels.
+  `#952 <https://github.com/skyfielders/python-skyfield/issues/952>`_
+
+* The Skyfield documentation is no longer installed alongside the Python
+  code, reducing the size of Skyfield by around 25%.  Users who need
+  offline access to the documentation will now need to download it
+  separately.
+
+v1.48 — 2024 February 7
+-----------------------
+
+* Skyfield is now compatible with NumPy 2.0!  (Previous versions of
+  Skyfield would raise an ``ImportError`` trying to import the symbol
+  ``float_``, which is now named ``float64``.)
+
+* Times now support the ``<`` operator, so Python can sort them.
+
+* For convenience, geoids like :data:`~skyfield.toposlib.wgs84` have a
+  new attribute :data:`~skyfield.toposlib.Geoid.polar_radius`.
+
+* You can no longer subtract two positions unless they have the same
+  ``.center``.  Otherwise, a ``ValueError`` is raised.  This check has
+  always been performed when you subtract vector functions, but it was
+  missing from the position subtraction routine.
+
+* On days that the Sun fails to rise and set in the Arctic and
+  Antarctic, the new rising and setting routines now correctly set the
+  value ``False`` not only for sunrise but also for sunset.
+
+* Fix: Skyfield no longer raises the following exception
+  if you call :meth:`~skyfield.positionlib.Barycentric.observe()`
+  on a position whose coordinate and time arrays are empty. ::
+
+   ValueError: zero-size array to reduction operation maximum which has no identity
+
+  Instead, an empty apparent position is now returned.
+  The exception was sometimes triggered by almanac routines
+  if you searched for an event that didn’t occur
+  between your start and end times.
+  `#991 <https://github.com/skyfielders/python-skyfield/issues/991>`_
+
+v1.47 — 2024 January 13
+-----------------------
+
+* Added faster and more accurate rising and setting routines!
+  See `risings-and-settings` for documentation and examples of the new
+  :func:`~skyfield.almanac.find_risings()` and
+  :func:`~skyfield.almanac.find_settings()` and
+  :func:`~skyfield.almanac.find_transits()` functions.
+  `#662 <https://github.com/skyfielders/python-skyfield/issues/662>`_
+
+* Skyfield’s internal table for the ∆T Earth orientation parameter has
+  been updated, so that its predictions now extend to 2025-01-18.
+
+* Constellation abbreviations are now consistent between the
+  :func:`~skyfield.api.load_constellation_map()` table and the
+  :func:`~skyfield.api.load_constellation_names()` list.  Previously,
+  ``CVn`` and ``TrA`` had been mis-capitalized in the list as ``Cvn``
+  and ``Tra``.
+  `#906 <https://github.com/skyfielders/python-skyfield/issues/906>`_
+
+v1.46 — 2023 April 9
+--------------------
+
+* The :func:`~skyfield.almanac.oppositions_conjunctions()` routine now
+  measures ecliptic longitude using the ecliptic of each specific date,
+  rather than always using the J2000 ecliptic, which should improve its
+  accuracy by several seconds.
+
+* Skyfield’s internal table for the ∆T Earth orientation parameter has
+  been updated, so that its predictions now extend to 2024-04-13.
+
+* Bugfix: Skyfield was giving values several kilometers off when
+  computing the elevation above ground level of a target that was
+  positioned directly above the Earth’s north or south pole.
+
+* Bugfix: the :func:`~skyfield.positionlib.ICRF.is_behind_earth()`
+  method was incorrectly returning ``True`` if the Earth was on the line
+  that joins the two satellites, but over on the far side of the other
+  satellite where it wasn’t really in the way.
+
+* Internals: the :meth:`~skyfield.positionlib.ICRF.altaz()` method now
+  lives on the main position class instead of in two specific
+  subclasses.  If the user mistakenly tries to call ``.altaz()`` on an
+  instance of the :class:`~skyfield.positionlib.Astrometric` position
+  subclass — which previously lacked the method — then a friendly
+  exception is raised explaining their error.
+
+v1.45 — 2022 September 15
+-------------------------
+
+* Bugfix: minor planets and comets in Skyfield 1.44 would raise an
+  exception if asked for a position in the half of their orbit where
+  they are inbound towards their perihelion.
+
+v1.44 — 2022 September 12
+-------------------------
+
+* Skyfield’s internal table for the ∆T Earth orientation parameter has
+  been updated, so that instead of including measurements only through
+  December 2021 it now knows Earth orientation through September 2022.
+
+* Distance and velocity objects can now be created by calling their unit
+  names as constructors, like ``d = Distance.km(5.0)`` and
+  ``v = Velocity.km_per_s(0.343)``.
+
+* Updated the URL from which the Hipparcos database ``hip_main.dat`` is
+  downloaded, following a change in the domain for the University of
+  Strasbourg from ``u-strasbg.fr`` to ``unistra.fr``.
+
+v1.43.1 — 2022 July 6
+---------------------
+
+* An attempt at overly clever scripting resulted in a Skyfield 1.43
+  release without a ``setup.py`` in its ``.tar.gz``; within an hour, a
+  Python 2.7 user had reported that Skyfield could no longer install.
+  This release is identical to 1.43 but (hopefully) installs correctly
+  for everyone!
+
+v1.43 — 2022 July 6
+-------------------
+
+* Fixed :func:`~skyfield.magnitudelib.planetary_magnitude()` so it works
+  for Saturn even when the time is an array rather than a single time;
+  also, improved its calculation slightly with respect to Uranus.
+  `#739 <https://github.com/skyfielders/python-skyfield/issues/739>`_
+
+* Improved :func:`~skyfield.data.mpc.load_comets_dataframe()` so that
+  parsing ``CometEls.txt`` with the most recent version of Pandas
+  doesn’t stumble over the commas in the final field of (for example)
+  Halley’s Comet and give the error ``ParserError: Error tokenizing
+  data. C error: Expected 12 fields…saw 13``.
+  `#707 <https://github.com/skyfielders/python-skyfield/issues/707>`_
+
+v1.42 — 2022 February 6
+-----------------------
+
+* Added two new position methods
+  :meth:`~skyfield.positionlib.ICRF.phase_angle()`
+  and
+  :meth:`~skyfield.positionlib.ICRF.fraction_illuminated()`
+  that, given an illuminator (usually the Sun) as their argument,
+  compute whether the observer is looking at the bright side or the dark
+  side of the target body.
+  They replace a pair of old functions in the almanac module.
 
 * The almanac routine :func:`~skyfield.almanac.moon_nodes()` would
-  sometimes skip nodes that were closer together than 14.0 days, so it
-  has been tightened down and should now detect all lunar nodes.
+  sometimes skip nodes that were closer together than 14.0 days.  It has
+  been tightened down and should now detect all lunar nodes.
   `#662 <https://github.com/skyfielders/python-skyfield/issues/662>`_
 
 * Time objects now feature a :meth:`~skyfield.timelib.Time.to_astropy`
   method.
 
 * The position method :meth:`~skyfield.positionlib.ICRF.to_skycoord` now
-  sets the `frame` attribute of the sky coordinate it returns, and for
+  sets the ``frame`` attribute of the sky coordinate it returns, and for
   now only supports barycentric and geocentric positions.
   `#577 <https://github.com/skyfielders/python-skyfield/issues/577>`_
 
@@ -107,7 +298,7 @@ v1.37 — 2021 February 15
 
 * The :class:`~skyfield.timelib.Time`
   tuple :data:`~skyfield.timelib.Time.utc`
-  and method :data:`~skyfield.timelib.Time.utc_strftime()`
+  and method :meth:`~skyfield.timelib.Time.utc_strftime()`
   are now backed by the same math,
   so they always advance to the next calendar day at the same moment.
   This makes it safe to mix values returned by one of them
@@ -178,7 +369,7 @@ v1.35 — 2020 December 31
   (The old method will remain in place to support legacy code,
   but is discouraged in new applications.)
 
-* The effects of :ref:`Polar motion` — if configured — are now included
+* The effects of :ref:`polar-motion` — if configured — are now included
   both when computing the position in space of an Earth latitude and longitude,
   and when determining the latitude and longitude beneath a celestial position.
 
@@ -206,7 +397,7 @@ v1.34 — 2020 December 10
 
 * Added an official :class:`~skyfield.framelib.itrs` reference frame.
 
-* Added support for IERS :ref:`polar motion` 𝑥 and 𝑦.
+* Added support for IERS :ref:`polar-motion` 𝑥 and 𝑦.
 
 * Added a method :meth:`~skyfield.toposlib.GeographicPosition.lst_hours_at()`
   that computes Local Sidereal Time.

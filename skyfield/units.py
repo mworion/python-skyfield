@@ -4,6 +4,7 @@
 """
 import numpy as np
 from numpy import abs, copysign, isnan
+from types import MethodType
 from .constants import AU_KM, AU_M, C, DAY_S, tau
 from .descriptorlib import reify
 from .functions import _to_array, length_of
@@ -19,15 +20,63 @@ class Unit(object):
     """A measurement that can be expressed in several choices of unit."""
 
     def __getitem__(self, *args):
+        """Tell users to ask for a specific unit before indexing or slicing."""
         cls = self.__class__
         name = cls.__name__
         s = 'to use this {0}, ask for its value in a particular unit:\n\n{1}'
         attrs = sorted(k for k, v in cls.__dict__.items()
-                       if k[0].islower() and isinstance(v, reify))
+                       if k[0].islower() and isinstance(v, (getset, reify)))
         examples = ['    {0}.{1}'.format(name.lower(), attr) for attr in attrs]
         raise UnpackingError(s.format(name, '\n'.join(examples)))
 
     __iter__ = __getitem__   # give advice about both foo[i] and "x,y,z = foo"
+
+class getset(object):
+    """Unit name that serves as both a class constructor and instance attribute.
+
+    This supports two use cases:
+
+    * When called as a class method like ``Distance.km(5.0)``, we build
+      and return an instance of ``Distance`` whose ``km`` has been set
+      to 5.0 and whose base unit ``m``, using the appropriate conversion
+      factor, has been set to 5000.0.
+
+    * When invoked like ``d.km`` on a particular ``Distance`` that
+      doesn't yet have a ``km`` attribute (which otherwise Python itself
+      would have returned), we apply the conversion factor to ``d.m``
+      and return the result.
+
+    """
+    def __init__(self, name, docstring, conversion_factor=None, core_unit=None):
+        self.name = name
+        self.__doc__ = docstring
+        self.conversion_factor = conversion_factor
+        self.core_unit = core_unit
+
+        if conversion_factor is None:
+            def _constructor(cls, value):
+                value = _to_array(value)
+                obj = cls.__new__(cls)
+                setattr(obj, name, value)
+                return obj
+
+        else:
+            def _constructor(cls, value):
+                value = _to_array(value)
+                obj = cls.__new__(cls)
+                setattr(obj, name, value)
+                setattr(obj, core_unit, value / conversion_factor)
+                return obj
+
+        _constructor.__doc__ = self.__doc__
+        self._constructor = _constructor
+
+    def __get__(self, instance, objtype=None):
+        if instance is None:  # the class itself has been asked for this name
+            return MethodType(self._constructor, objtype)
+        value = getattr(instance, self.core_unit) * self.conversion_factor
+        instance.__dict__[self.name] = value
+        return value
 
 class Distance(Unit):
     """A distance, stored internally as au and available in other units.
@@ -48,12 +97,9 @@ class Distance(Unit):
     149597870.70 km
 
     """
-    _warned = False
-
     def __init__(self, au=None, km=None, m=None):
         if au is not None:
             self.au = _to_array(au)
-            """Astronomical units."""
         elif km is not None:
             self.km = km = _to_array(km)
             self.au = km / AU_KM
@@ -64,24 +110,13 @@ class Distance(Unit):
             raise ValueError('to construct a Distance provide au, km, or m')
 
     @classmethod
-    def from_au(cls, au):
-        self = cls.__new__(cls)
-        self.au = _to_array(au)
-        return self
+    def from_au(cls, au):  # deprecated and no longer used internally
+        return cls.au(au)
 
-    @reify
-    def au(self):  # Empty property to provide Sphinx docstring.
-        """Astronomical units (the Earth-Sun distance of 149,597,870,700 m)."""
-
-    @reify
-    def km(self):
-        """Kilometers (1,000 meters)."""
-        return self.au * AU_KM
-
-    @reify
-    def m(self):
-        """Meters."""
-        return self.au * AU_M
+    au = getset('au', 'Astronomical units'
+                ' (the Earth-Sun distance of 149,597,870,700 m).')
+    km = getset('km', 'Kilometers (1,000 meters).', AU_KM, 'au')
+    m = getset('m', 'Meters.', AU_M, 'au')
 
     def __str__(self):
         n = self.au
@@ -120,8 +155,6 @@ class Velocity(Unit):
     array to its ``au_per_d=`` parameter.
 
     """
-    _warned = False
-
     # TODO: consider reworking this class to return a Rate object.
 
     def __init__(self, au_per_d=None, km_per_s=None):
@@ -134,19 +167,11 @@ class Velocity(Unit):
             raise ValueError('to construct a Velocity provide'
                              ' au_per_d or km_per_s')
 
-    @reify
-    def au_per_d(self):  # Empty property to provide Sphinx docstring.
-        """Astronomical units per day."""
-
-    @reify
-    def km_per_s(self):
-        """Kilometers per second."""
-        return self.au_per_d * AU_KM / DAY_S
-
-    @reify
-    def m_per_s(self):
-        """Meters per second."""
-        return self.au_per_d * AU_M / DAY_S
+    au_per_d = getset('au_per_d', 'Astronomical units per day.')
+    km_per_s = getset('km_per_s', 'Kilometers per second.',
+                      AU_KM / DAY_S, 'au_per_d')
+    m_per_s = getset('m_per_s', 'Meters per second.',
+                     AU_M / DAY_S, 'au_per_d')
 
     def __str__(self):
         n = self.au_per_d
@@ -254,10 +279,10 @@ class Angle(Unit):
         elif radians is not None:
             self.radians = _to_array(radians)
         elif degrees is not None:
-            self._degrees = degrees = _to_array(_unsexagesimalize(degrees))
+            self.degrees = degrees = _to_array(_unsexagesimalize(degrees))
             self.radians = degrees / 360.0 * tau
         elif hours is not None:
-            self._hours = hours = _to_array(_unsexagesimalize(hours))
+            self.hours = hours = _to_array(_unsexagesimalize(hours))
             self.radians = hours / 24.0 * tau
 
         self.preference = (preference if preference is not None
@@ -275,54 +300,46 @@ class Angle(Unit):
         self.signed = signed
         return self
 
-    @reify
-    def radians(self):  # Empty property to provide Sphinx docstring.
-        """Radians (𝜏 = 2𝜋 in a circle)."""
+    radians = getset('radians', 'Radians (𝜏 = 2𝜋 in a circle).')
 
+    # Deprecated names, to support legacy code.
     @reify
-    def _hours(self):
-        return self.radians * 24.0 / tau
-
+    def _hours(self): return self.hours
     @reify
-    def _degrees(self):
-        return self.radians * 360.0 / tau
+    def _degrees(self): return self.degrees
 
     @reify
     def hours(self):
         r"""Hours (24\ |h| in a circle)."""
-        if self.preference != 'hours':
-            raise WrongUnitError('hours')
-        return self._hours
+        return self.radians * 24.0 / tau
 
     @reify
     def degrees(self):
         """Degrees (360° in a circle)."""
-        if self.preference != 'degrees':
-            raise WrongUnitError('degrees')
-        return self._degrees
+        return self.radians * 360.0 / tau
 
     def arcminutes(self):
         """Return the angle in arcminutes."""
-        return self._degrees * 60.0
+        return self.degrees * 60.0
 
     def arcseconds(self):
         """Return the angle in arcseconds."""
-        return self._degrees * 3600.0
+        return self.degrees * 3600.0
 
     def mas(self):
         """Return the angle in milliarcseconds."""
-        return self._degrees * 3600000.0
+        return self.degrees * 3600000.0
 
     def __str__(self):
         size = self.radians.size
         if size == 0:
             return 'Angle []'
         if self.preference == 'degrees':
-            v = self._degrees
+            v = self.degrees
             fmt = _dsgn.format if self.signed else _dfmt.format
             places = 1
         else:
-            v = self._hours
+            v = self.hours
             fmt = _hfmt.format
             places = 2
         if size >= 2:
@@ -344,7 +361,7 @@ class Angle(Unit):
         """
         if warn and self.preference != 'hours':
             raise WrongUnitError('hms')
-        sign, units, minutes, seconds = _sexagesimalize_to_float(self._hours)
+        sign, units, minutes, seconds = _sexagesimalize_to_float(self.hours)
         return sign * units, sign * minutes, sign * seconds
 
     def signed_hms(self, warn=True):
@@ -356,7 +373,7 @@ class Angle(Unit):
         """
         if warn and self.preference != 'hours':
             raise WrongUnitError('signed_hms')
-        return _sexagesimalize_to_float(self._hours)
+        return _sexagesimalize_to_float(self.hours)
 
     def hstr(self, places=2, warn=True, format=_hfmt):
         """Return a string like ``12h 07m 30.00s``; see `Formatting angles`.
@@ -368,7 +385,7 @@ class Angle(Unit):
         """
         if warn and self.preference != 'hours':
             raise WrongUnitError('hstr')
-        hours = self._hours
+        hours = self.hours
         shape = getattr(hours, 'shape', ())
         fmt = format.format  # `format()` method of `format` string
         if shape:
@@ -383,7 +400,7 @@ class Angle(Unit):
         """
         if warn and self.preference != 'degrees':
             raise WrongUnitError('dms')
-        sign, units, minutes, seconds = _sexagesimalize_to_float(self._degrees)
+        sign, units, minutes, seconds = _sexagesimalize_to_float(self.degrees)
         return sign * units, sign * minutes, sign * seconds
 
     def signed_dms(self, warn=True):
@@ -395,7 +412,7 @@ class Angle(Unit):
         """
         if warn and self.preference != 'degrees':
             raise WrongUnitError('signed_dms')
-        return _sexagesimalize_to_float(self._degrees)
+        return _sexagesimalize_to_float(self.degrees)
 
     def dstr(self, places=1, warn=True, format=None):
         """Return a string like ``181deg 52' 30.0"``; see `Formatting angles`.
@@ -407,7 +424,7 @@ class Angle(Unit):
         """
         if warn and self.preference != 'degrees':
             raise WrongUnitError('dstr')
-        degrees = self._degrees
+        degrees = self.degrees
         signed = self.signed
         if format is None:
             format = _dsgn if signed else _dfmt

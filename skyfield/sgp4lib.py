@@ -4,6 +4,7 @@
 from numpy import (
     array, concatenate, identity, multiply, ones_like, repeat,
 )
+from sgp4 import omm
 from sgp4.api import SGP4_ERRORS, Satrec
 
 from .constants import AU_KM, DAY_S, T0, tau
@@ -133,6 +134,23 @@ class EarthSatellite(VectorFunction):
         day += 0.5  # convert integer Julian day into Julian date float
         self.epoch = ts.utc(year, month, day + fraction + satrec.jdsatepochF)
 
+        self._setup(satrec)
+        return self
+
+    @classmethod
+    def from_omm(cls, ts, element_dict):
+        """Build an EarthSatellite from OMM text fields.
+
+        Provide a ``ts`` timescale object, and a Python dict of OMM
+        field names and values.  The timescale is used to build the
+        satellite's ``.epoch`` time.
+
+        """
+        self = cls.__new__(cls)
+        self.name = element_dict.get('OBJECT_NAME', None)
+        self.model = satrec = Satrec()
+        omm.initialize(satrec, element_dict)
+        self.epoch = ts._utc_jd(satrec.jdsatepoch, satrec.jdsatepochF)
         self._setup(satrec)
         return self
 
@@ -282,9 +300,17 @@ class EarthSatellite(VectorFunction):
         return ts.tt_jd(jd[i]), v[i]
 
 class TEME(object):
-    """The SGP4-specific True Equator Mean Equinox frame of reference.
+    """The satellite-specific True Equator Mean Equinox frame of reference.
 
-    Described in AIAA 2006-6753 Appendix C.  See :ref:`reference_frames`
+    This TEME frame is used to measure right ascension and declination,
+    and is the reference frame of the SGP4 Earth satellite orbit model.
+    It is a bit quirky.  Instead measuring right ascension from the true
+    vernal equinox point, it uses the ‘mean’ equniox that considers only
+    precession but not nutation (the same equinox used for Greenwich
+    Mean Sidereal Time).  This made the reference frame more tractable
+    for the 1970s computers that first implemented SGP4.
+
+    Defined in AIAA 2006-6753 Appendix C.  See :ref:`reference_frames`
     for a guide to using Skyfield reference frames like this one.
 
     """

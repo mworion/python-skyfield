@@ -7,11 +7,21 @@ are appropriate for sprints and collaboration, and longer-term goals
 that the code base is not quite ready for yet but that we do not want to
 forget.
 
-Sprint Possibilities
-====================
+* Look over bugs listed for the NOVAS library, and see if any of the
+  fixes also need to be made here in Skyfield:
+  https://github.com/Smithsonian/SuperNOVAS?tab=readme-ov-file#fixed-novas-c-31-issues
+
+* While ``is_sunlit()`` is easy to use with a bare Earth satellite
+  because it expects to compute the positions of both Earth and Sun, the
+  ``phase_angle()`` method instead needs the position to already know
+  its barycentric center because it’s only willing to compute the
+  position of the Sun.  Should they share logic, that would use a
+  barycentric coordinate if it already exists, but that otherwise would
+  compute and cache it?  Or, should users have to do the work
+  themselves, but maybe we could make it easier?
 
 * Somewhere the Skyfield docs should mention this URL:
-  https://celestrak.com/NORAD/elements/active.txt
+  https://celestrak.org/NORAD/elements/active.txt
 
 * If a user builds a ``wgs84.latlon()``, and then calls its ``at()`` to
   get a position, and then tries to use it to ``observe()``, then they
@@ -114,10 +124,6 @@ Sprint Possibilities
   ephemeris for a raw position in au, without having to spin up a body
   object and have it spin up a `Distance` object.
 
-* We currently download most SPICE kernels from NAIF, but have to use
-  FTP for fetching DE422.  Are the files from the two sites equivalent
-  and do they have the same data?  Should we prefer one or the other?
-
 * We should have an illustration of Earth satellite heights above the
   surface, plotted against a blue atmosphere fading out into the black
   of space as the plot goes upwards towards the top.
@@ -160,6 +166,9 @@ Sprint Possibilities
   geocentric objects work.  Was the old behavior documented?  (Not that
   I can find!)
 
+* Should the `.target` string of `_KeplerOrbit` become `.target_name`
+  instead?
+
 Adding more smarts to ephemeris handling
 ========================================
 
@@ -182,10 +191,3 @@ Adding more smarts to ephemeris handling
   need to be vectorized and updated to use a Skyfield approach to vector
   and matrix operations.  When complete and documented, make a comment
   at: https://github.com/skyfielders/python-skyfield/issues/350
-
-For 2.0
-=======
-
-* Remove old deprecation warnings for pre-1.0 behaviors.
-
-* Remove support and tests for old ephemeris Python packages.

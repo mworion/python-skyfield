@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Classes representing different kinds of astronomical position."""
 
-from numpy import array, cos, einsum, full, reshape, nan, nan_to_num
+from numpy import array, cos, einsum, full, reshape, nan, nan_to_num, zeros
 from . import framelib
 from .constants import ANGVEL, AU_M, C, ERAD, DAY_S, RAD2DEG, pi, tau
 from .descriptorlib import reify
@@ -23,8 +23,6 @@ def build_position(position_au, velocity_au_per_d=None, t=None,
         cls = Barycentric
     elif center == 399:
         cls = Geocentric
-    elif hasattr(center, 'rotation_at'):  # and thus deserves an altaz() method
-        cls = Geometric
     else:
         cls = ICRF
     return cls(position_au, velocity_au_per_d, t, center, target)
@@ -57,28 +55,24 @@ def position_of_radec(ra_hours, dec_degrees, distance_au=_GIGAPARSEC_AU,
 
 def position_from_radec(ra_hours, dec_degrees, distance=1.0, epoch=None,
                         t=None, center=None, target=None):
-    """DEPRECATED version of ``position_of_radec()``.
-
-    Problems:
-
-    * The ``distance`` parameter specifies no unit, contrary to Skyfield
-      best practices.  I have no idea what I was thinking.
-
-    * The default ``distance`` is far too small, since most objects for
-      which users specify an RA and declination are out on the celestial
-      sphere.  The hope was that users would see the length 1.0 and
-      think, “ah, yes, that’s obviously a fake placeholder value.”  But
-      it’s more likely that users will not even check the distance, or
-      maybe not even realize that a distance is involved.
-
-    """
+    """DEPRECATED version of ``position_of_radec()``."""
     return position_of_radec(ra_hours, dec_degrees, distance, epoch,
                              t, center, target)
+
+class SSB(object):
+    """The Solar System Barycenter."""
+    @staticmethod
+    def at(t):
+        """Return the position of the Solar System Barycenter at time ``t``."""
+        shape = (3,)
+        if t.shape:
+            shape += t.shape
+        return Barycentric(zeros(shape), zeros(shape), t)
 
 class ICRF(object):
     """An |xyz| position and velocity oriented to the ICRF axes.
 
-    The International Coordinate Reference Frame (ICRF) is a permanent
+    The International Celestial Reference Frame (ICRF) is a permanent
     reference frame that is the replacement for J2000.  Their axes agree
     to within 0.02 arcseconds.  It also supersedes older equinox-based
     systems like B1900 and B1950.
@@ -170,6 +164,11 @@ class ICRF(object):
 
     def __sub__(self, body):
         """Subtract two ICRF vectors to produce a third."""
+        if self.center != body.center:
+            raise ValueError(
+                "you can only subtract two vectors"
+                " if they both start at the same center"
+            )
         p = self.position.au - body.position.au
         if self.velocity is None or body.velocity is None:
             v = None
@@ -290,7 +289,7 @@ class ICRF(object):
         Because this declination is measured from the plane of the
         Earth’s physical geographic equator, it will be slightly
         different than the declination returned by ``radec()`` if you
-        have loaded a :ref:`polar motion` file.
+        have loaded a :ref:`polar-motion` file.
 
         The coordinates are not adjusted for atmospheric refraction near
         the horizon.
@@ -299,13 +298,40 @@ class ICRF(object):
         R = framelib.itrs.rotation_at(self.t)
         r = mxv(R, self.position.au)
         au, dec, sublongtiude = to_spherical(r)
-        ha = self.center.longitude.radians - sublongtiude
+        lon = getattr(self.center, 'longitude', None)
+        if lon is None:
+            raise ValueError(_hadec_message)
+        ha = lon.radians - sublongtiude
         ha += pi
         ha %= tau
         ha -= pi
         return (Angle(radians=ha, preference='hours', signed=True),
                 Angle(radians=dec, signed=True),
                 Distance(au))
+
+    def altaz(self, temperature_C=None, pressure_mbar='standard'):
+        """Compute (alt, az, distance) relative to the observer's horizon
+
+        The altitude returned is an :class:`~skyfield.units.Angle`
+        measured in degrees above the horizon, while the azimuth
+        :class:`~skyfield.units.Angle` measures east along the horizon
+        from geographic north (so 0 degrees means north, 90 is east, 180
+        is south, and 270 is west).
+
+        By default, Skyfield does not adjust the altitude for
+        atmospheric refraction.  If you want Skyfield to estimate how
+        high the atmosphere might lift the body's image, give the
+        argument ``temperature_C`` either the temperature in degrees
+        centigrade, or the string ``'standard'`` (in which case 10°C is
+        used).
+
+        When calculating refraction, Skyfield uses the observer’s
+        elevation above sea level to estimate the atmospheric pressure.
+        If you want to override that value, simply provide a number
+        through the ``pressure_mbar`` parameter.
+
+        """
+        return _to_altaz(self, temperature_C, pressure_mbar)
 
     def separation_from(self, another_icrf):
         """Return the angle between this position and another.
@@ -432,7 +458,7 @@ class ICRF(object):
         return Distance(r), Velocity(v)
 
     def frame_latlon(self, frame):
-        """Return longitude, latitude, and distance in the given frame.
+        """Return latitude, longitude, and distance in the given frame.
 
         Returns a 3-element tuple giving the latitude and longitude as
         :class:`~skyfield.units.Angle` objects and the range to the
@@ -447,7 +473,7 @@ class ICRF(object):
                 Distance(d))
 
     def frame_latlon_and_rates(self, frame):
-        """Return a reference frame longitude, latitude, range, and rates.
+        """Return a reference frame latitude, longitude, range, and rates.
 
         Return a 6-element tuple of 3 coordinates and 3 rates-of-change
         for this position in the given reference ``frame``:
@@ -508,14 +534,22 @@ class ICRF(object):
         """Return this position’s phase angle: the angle Sun-target-observer.
 
         Given a Sun object (which you can build by loading an ephemeris
-        and looking up ``eph['Sun']``), return the `Angle` between the
-        light arriving at this position’s target from the Sun and the
-        light traveling from this position’s target to the observer.
+        and looking up ``eph['Sun']``), return the `Angle` from the
+        body's point of view between light arriving from the Sun and the
+        light departing toward the observer.  This angle is 0° if the
+        observer is in the same direction as the Sun and sees the body
+        as fully illuminated, and 180° if the observer is behind the
+        body and sees only its dark side.
 
         .. versionadded:: 1.42
 
         """
-        return self.separation_from(self.center_barycentric - sun.at(self.t))
+        # TODO: should we have the body .observe() the Sun, to account
+        # for light travel time?
+        s = sun.at(self.t)
+        u = self.position.au
+        v = u - s.position.au + self.center_barycentric.position.au
+        return Angle(radians=angle_between(u, v))
 
     def fraction_illuminated(self, sun):
         """Return the fraction of the target’s disc that is illuminated.
@@ -570,7 +604,8 @@ class ICRF(object):
         earth_m = - observer_gcrs_au * AU_M
         vector_m = self.position.m
         near, far = intersect_line_and_sphere(vector_m, earth_m, ERAD)
-        return nan_to_num(far) > 0
+        length_m = length_of(vector_m)
+        return (nan_to_num(far) > 0) & (nan_to_num(near) < length_m)
 
     @reify
     def _altaz_rotation(self):
@@ -616,44 +651,7 @@ class ICRF(object):
 # important enough change to warrant a deprecation error for users, so:
 ICRS = ICRF
 
-
-class Geometric(ICRF):
-    """An |xyz| vector between two instantaneous position.
-
-    A geometric position is the difference between the Solar System
-    positions of two bodies at exactly the same instant.  It is *not*
-    corrected for the fact that, in real physics, it will take time for
-    light to travel from one position to the other.
-
-    Both the ``.position`` and ``.velocity`` are |xyz| vectors
-    oriented along the axes of the International Celestial Reference
-    System (ICRS), the modern replacement for J2000 coordinates.
-
-    """
-    def altaz(self, temperature_C=None, pressure_mbar='standard'):
-        """Compute (alt, az, distance) relative to the observer's horizon
-
-        The altitude returned is an :class:`~skyfield.units.Angle`
-        measured in degrees above the horizon, while the azimuth
-        :class:`~skyfield.units.Angle` measures east along the horizon
-        from geographic north (so 0 degrees means north, 90 is east, 180
-        is south, and 270 is west).
-
-        By default, Skyfield does not adjust the altitude for
-        atmospheric refraction.  If you want Skyfield to estimate how
-        high the atmosphere might lift the body's image, give the
-        argument ``temperature_C`` either the temperature in degrees
-        centigrade, or the string ``'standard'`` (in which case 10°C is
-        used).
-
-        When calculating refraction, Skyfield uses the observer’s
-        elevation above sea level to estimate the atmospheric pressure.
-        If you want to override that value, simply provide a number
-        through the ``pressure_mbar`` parameter.
-
-        """
-        return _to_altaz(self, temperature_C, pressure_mbar)
-
+class Geometric(ICRF): pass  # deprecated; kept for backwards compatibility
 
 class Barycentric(ICRF):
     """An |xyz| position measured from the Solar System barycenter.
@@ -719,6 +717,12 @@ class Astrometric(ICRF):
     call ``.apparent()`` to generate an :class:`Apparent` position.
 
     """
+    def altaz(self):
+        raise ValueError(
+            'it is not useful to call .altaz() on an astrometric position;'
+            ' try calling .apparent() first to get an apparent position'
+        )
+
     def apparent(self):
         """Compute an :class:`Apparent` position for this body.
 
@@ -813,30 +817,6 @@ class Apparent(ICRF):
       equator and equinox of date.
 
     """
-    def altaz(self, temperature_C=None, pressure_mbar='standard'):
-        """Compute (alt, az, distance) relative to the observer's horizon
-
-        The altitude returned is an :class:`~skyfield.units.Angle`
-        measured in degrees above the horizon, while the azimuth
-        :class:`~skyfield.units.Angle` measures east along the horizon
-        from geographic north (so 0 degrees means north, 90 is east, 180
-        is south, and 270 is west).
-
-        By default, Skyfield does not adjust the altitude for
-        atmospheric refraction.  If you want Skyfield to estimate how
-        high the atmosphere might lift the body's image, give the
-        argument ``temperature_C`` either the temperature in degrees
-        centigrade, or the string ``'standard'`` (in which case 10°C is
-        used).
-
-        When calculating refraction, Skyfield uses the observer’s
-        elevation above sea level to estimate the atmospheric pressure.
-        If you want to override that value, simply provide a number
-        through the ``pressure_mbar`` parameter.
-
-        """
-        return _to_altaz(self, temperature_C, pressure_mbar)
-
 
 class Geocentric(ICRF):
     """An |xyz| position measured from the center of the Earth.
@@ -892,10 +872,14 @@ def _to_altaz(position, temperature_C, pressure_mbar):
 
     return alt, Angle(radians=az), Distance(r_au)
 
+_hadec_message = (
+    'to compute a body’s hour angle, you must observe it'
+    ' from a specific latitude and longitude on Earth'
+)
 _altaz_message = (
-    'to compute an altazimuth position, you must observe from a'
-    ' specific Earth location or from a position on another body'
-    ' loaded from a set of planetary constants'
+    'to compute altitude and azimuth, you must observe it from a specific'
+    ' latitude and longitude on Earth, or else from a location on another'
+    ' Solar System body that you have loaded from a set of planetary constants'
 )
 
 class _Fake(ICRF):  # support for deprecated frame rotation methods above

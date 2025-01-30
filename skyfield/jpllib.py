@@ -72,6 +72,7 @@ class SpiceKernel(object):
         self.segments = [SPICESegment(self, s) for s in self.spk.segments]
         self.codes = set(s.center for s in self.segments).union(
                          s.target for s in self.segments)
+        self.comments = self.spk.comments  # deprecated pass-through method
 
     def __repr__(self):
         return '<{0} {1!r}>'.format(type(self).__name__, self.path)
@@ -100,24 +101,6 @@ class SpiceKernel(object):
         # unless the metadata also disappears.
         del self.segments[:]
         self.codes.clear()
-
-    def comments(self):
-        """Return the comments string of this kernel.
-
-        The resulting string often contains embedded newlines, and is
-        formatted for a human reader.
-
-        >>> print(planets.comments())
-        ; de421.bsp LOG FILE
-        ;
-        ; Created 2008-02-12/11:33:34.00.
-        ...
-        LEAPSECONDS_FILE    = naif0007.tls
-        SPK_FILE            = de421.bsp
-        ...
-
-        """
-        return self.spk.comments()
 
     def names(self):
         """Return all target names that are valid with this kernel.
@@ -218,11 +201,10 @@ class ChebyshevPosition(SPICESegment):
             position, velocity = segment.compute_and_differentiate(
                 t.whole, t.tdb_fraction)
         except OutOfRangeError as e:
-            start_time = t.ts.tdb(jd=segment.start_jd)
-            end_time = t.ts.tdb(jd=segment.end_jd)
-            # TODO: switch to calendar dates in TDB to produce round numbers?
-            text = ('ephemeris segment only covers dates %s through %s UT'
-                    % (start_time.utc_iso(' '), end_time.utc_iso(' ')))
+            start_time, end_time = self.time_range(t.ts)
+            s = '%04d-%02d-%02d' % start_time.tdb_calendar()[:3]
+            t = '%04d-%02d-%02d' % end_time.tdb_calendar()[:3]
+            text = 'ephemeris segment only covers dates %s through %s' % (s, t)
             mask = e.out_of_range_times
             segment = self.spk_segment
             e = EphemerisRangeError(text, start_time, end_time, mask, segment)

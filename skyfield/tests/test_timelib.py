@@ -135,6 +135,16 @@ def test_days_overflow_correctly(ts):
         '2020-10-02', '2020-11-01', '2020-12-02', '2021-01-01',
     ]
 
+def test_sequence_behaviors_of_time_that_is_not_array(ts):
+    t = ts.utc(2023, 4, 2)
+    with assert_raises(TypeError):
+        for item in t:
+            pass
+    # The specific exception TypeError in the following case makes
+    # Pandas inference.is_sequence() happy.
+    with assert_raises(TypeError):
+        len(t)
+
 def test_time_can_be_indexed(ts):
     for t in all_kinds_of_time_array(ts):
         t[0]
@@ -266,6 +276,23 @@ def test_building_time_from_python_date(ts):
     t = ts.utc(d)
     assert t.utc == (2020, 7, 22, 0, 0, 0.0)
 
+def test_building_time_from_utc_julian_date(ts):
+    t = ts._utc_jd(2457754.5, - one_second)
+    assert t.utc == (2016, 12, 31, 23, 59, 59.0)  # no JD corresponds to s=60.0
+
+    t = ts._utc_jd(2457754.5, 0.0)
+    assert t.utc == (2017, 1, 1, 0, 0, 0.0)
+
+    t = ts._utc_jd(2457754.5, one_second)
+    assert t.utc == (2017, 1, 1, 0, 0, 1.0)
+
+def test_utc_julian_date_accuracy(ts):
+    if sys.version_info <= (3,):
+        return  # our utc_strftime() hack does not work under Python 2
+
+    t = ts._utc_jd(2460439.5, 0.36689744000250357)
+    assert t.utc_strftime('%H:%M:%S.%f') == '08:48:19.938816'
+
 def test_timescale_linspace(ts):
     t0 = ts.tt(2021, 11, 3, 6)
     t1 = ts.tt(2021, 11, 5, 18)
@@ -349,6 +376,12 @@ def test_utc_datetime_and_leap_second(ts):
     assert dt == datetime(1969, 7, 20, 20, 18, 0, 0, utc)
     assert leap_second == 0
 
+    t = ts.utc(1969, 7, 20, 20, [18, 19])
+    dt, leap_second = t.utc_datetime_and_leap_second()
+    assert list(dt) == [datetime(1969, 7, 20, 20, 18, 0, 0, utc),
+                        datetime(1969, 7, 20, 20, 19, 0, 0, utc)]
+    assert list(leap_second) == [0,0]
+
 def test_utc_datetime_microseconds_round_trip(ts):
     dt = datetime(2020, 5, 10, 11, 50, 9, 727799, tzinfo=utc)
     t = ts.from_datetime(dt)
@@ -362,6 +395,28 @@ def test_utc_datetime_agrees_with_public_utc_tuple(ts):
     t = ts.utc(2021, 1, 1, 23, 59, 59.9999798834251798497)
     assert t.utc[:5] == (2021, 1, 1, 23, 59)
     assert t.utc_strftime("%j") == '001'
+
+def test_utc_datetime_exception_for_negative_year():
+    ts = api.load.timescale()
+    ts.julian_calendar_cutoff = GREGORIAN_START
+    t = ts.utc(-1, 1, 1)
+    with assert_raises(ValueError, 'negative years like the year -1'):
+        t.utc_datetime()
+
+    t = ts.utc([-2, -3, -1], 1, 1)
+    with assert_raises(ValueError, 'negative years like the year -2'):
+        t.utc_datetime()
+
+def test_utc_datetime_exception_for_julian_leap_day():
+    ts = api.load.timescale()
+    ts.julian_calendar_cutoff = GREGORIAN_START
+    t = ts.utc(700, 2, 29)
+    with assert_raises(ValueError, 'Julian leap days like 700 February 29'):
+        t.utc_datetime()
+
+    t = ts.utc(700, 2, [28, 29, 30])
+    with assert_raises(ValueError, 'Julian leap days like 700 February 29'):
+        t.utc_datetime()
 
 def test_iso_of_decimal_that_rounds_up(ts):
     t = ts.utc(1915, 12, 2, 3, 4, 5.6786786)
@@ -753,3 +808,5 @@ def test_time_math(ts):
     bump = dt_module.timedelta(microseconds=300)
     assert (t - bump).utc_jpl() == 'A.D. 2020-Jun-08 02:58:50.8157 UTC'
     assert (t + bump).utc_jpl() == 'A.D. 2020-Jun-08 02:58:50.8163 UTC'
+
+    assert t < t + 1

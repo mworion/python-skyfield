@@ -20,6 +20,10 @@ def test_subtraction():
     assert tuple(p.position.au) == (9, 18, 27)
     assert tuple(p.velocity.au_per_d) == (36, 45, 54)
 
+    p1.center = 1
+    with assert_raises(ValueError):
+        p0 - p1
+
 def test_separation_from_on_scalar():
     p0 = ICRF((1, 0, 0))
     p1 = ICRF((0, 1, 0))
@@ -29,7 +33,7 @@ def test_separation_from_on_two_array_values():
     p0 = ICRF(([1,1], [0,0], [0,0]))
     p1 = ICRF(([0,-1], [1,0], [0,0]))
     sep = p0.separation_from(p1)
-    d = sep._degrees
+    d = sep.degrees
     assert len(d) == 2
     assert d[0] == 90.0
     assert d[1] == 180.0
@@ -38,7 +42,7 @@ def test_separation_from_on_an_array_and_a_scalar():
     p0 = ICRF(([1,0], [0,1], [0,0]))
     p1 = ICRF((0, 0, 1))
     sep = p0.separation_from(p1)
-    d = sep._degrees
+    d = sep.degrees
     assert len(d) == 2
     assert d[0] == 90.0
     assert d[1] == 90.0
@@ -46,7 +50,7 @@ def test_separation_from_on_an_array_and_a_scalar():
     # And the other way around:
 
     sep = p1.separation_from(p0)
-    d = sep._degrees
+    d = sep.degrees
     assert len(d) == 2
     assert d[0] == 90.0
     assert d[1] == 90.0
@@ -139,7 +143,7 @@ def test_position_of_radec():
     ra, dec, distance = p.radec(epoch=epoch)
     assert abs(ra.hours) < 1e-12
     assert abs(dec.degrees) < 1e-12
-    assert abs(distance.au - 1) < 1e-16
+    assert abs(distance.au - 1) < 3e-16
 
 def test_position_from_radec():
     # Only a couple of minimal tests, since the routine is deprecated.
@@ -148,6 +152,25 @@ def test_position_from_radec():
 
     p = api.position_from_radec(6, 0)
     assert length_of(p.position.au - [0, 1, 0]) < 1e-16
+
+def test_ssb():
+    ts = api.load.timescale()
+    t = ts.utc(2025, 1, 28)
+    p = api.SSB.at(t)
+    z = [0,0,0]
+    assert p.xyz.au.tolist() == z
+    assert p.velocity.au_per_d.tolist() == z
+
+    star = Star(ra_hours=12, dec_degrees=345)
+    p.observe(star)
+
+    t = ts.utc(2025, 1, [28,29])
+    p = api.SSB.at(t)
+    z2 = [[0,0], [0,0], [0,0]]
+    assert p.xyz.au.tolist() == z2
+    assert p.velocity.au_per_d.tolist() == z2
+
+    p.observe(star)
 
 def test_velocity_in_ITRF_to_GCRS2():
     # TODO: Get test working with these vectors too, showing it works
@@ -184,7 +207,7 @@ def test_velocity_in_ITRF_to_GCRS2():
     relative_error = (length_of(actual_motion - predicted_motion)
                       / length_of(actual_motion))
 
-    acceptable_error = 4e-12
+    acceptable_error = 1e-11
     assert relative_error < acceptable_error
 
 def test_light_time_method():
@@ -239,8 +262,8 @@ def test_cirs_era():
     era = 360.0 * earth_rotation_angle(st.ut1)
 
     tol = (1e-8 / 3600.0)  # 10 nano arc-second precision
-    assert np.allclose(tio_ra._degrees, era, rtol=0.0, atol=tol)
-    assert np.allclose(tio_dec._degrees, 0.0, rtol=0.0, atol=tol)
+    assert np.allclose(tio_ra.degrees, era, rtol=0.0, atol=tol)
+    assert np.allclose(tio_dec.degrees, 0.0, rtol=0.0, atol=tol)
 
 
 # Check a line of points along the terrestrial prime meridian all have the same
@@ -262,8 +285,8 @@ def test_cirs_meridian():
     era = 360.0 * earth_rotation_angle(st.ut1)
 
     tol = (1e-7 / 3600.0)  # 100 nano arc-second precision
-    assert np.allclose(md_ra._degrees, era, rtol=0.0, atol=tol)
-    assert np.allclose(md_dec._degrees, 90 - alt, rtol=0.0, atol=tol)
+    assert np.allclose(md_ra.degrees, era, rtol=0.0, atol=tol)
+    assert np.allclose(md_dec.degrees, 90 - alt, rtol=0.0, atol=tol)
 
 
 # Check a set of positions and times against results calculated externally
@@ -323,8 +346,8 @@ def test_cirs_sofa():
         with low_precision_ERA():
             ra_cirs, dec_cirs, _ = earth.at(st).observe(ss).apparent().cirs_radec(st)
 
-        assert np.allclose(ra_cirs._degrees, ra_sofa, rtol=0.0, atol=tol)
-        assert np.allclose(dec_cirs._degrees, dec_sofa, rtol=0.0, atol=tol)
+        assert np.allclose(ra_cirs.degrees, ra_sofa, rtol=0.0, atol=tol)
+        assert np.allclose(dec_cirs.degrees, dec_sofa, rtol=0.0, atol=tol)
 
 def test_phase_angle_and_fraction_illuminated():
     ts = api.load.timescale()
@@ -335,16 +358,17 @@ def test_phase_angle_and_fraction_illuminated():
 
     p = earth.at(t1).observe(moon)
     a = p.phase_angle(sun).degrees.round(1)
-    assert a == 76.4
+    assert a == 76.2
     i = p.fraction_illuminated(sun).round(2)
     assert i == 0.62
 
     p = earth.at(t).observe(moon)
     a = p.phase_angle(sun).degrees.round(1)
-    assert list(a) == [172.0, 172.6, 159.7, 146.7, 134.0,
-                       121.8, 110.0, 98.5, 87.3, 76.4]
-    i = p.fraction_illuminated(sun).round(2)
-    assert list(i) == [0, 0, 0.03, 0.08, 0.15, 0.24, 0.33, 0.43, 0.52, 0.62]
+    assert list(a) == [172.0, 172.6, 159.6, 146.6, 133.9,
+                       121.7, 109.9, 98.4, 87.2, 76.2]
+    i = (p.fraction_illuminated(sun) * 100).round(2)
+    assert list(i) == [0.49, 0.41, 3.12, 8.25, 15.30, 23.73, 33.01,  # not 33.02?
+                       42.71, 52.45, 61.92]
 
 def test_astropy_conversion():
     try:
